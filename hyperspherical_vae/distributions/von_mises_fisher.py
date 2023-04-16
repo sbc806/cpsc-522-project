@@ -8,7 +8,6 @@ from hyperspherical_vae.distributions.hyperspherical_uniform import Hyperspheric
 
 # noinspection PyCallingNonCallable
 class VonMisesFisher(torch.distributions.Distribution):
-
     arg_constraints = {'loc': torch.distributions.constraints.real,
                        'scale': torch.distributions.constraints.positive}
     support = torch.distributions.constraints.real
@@ -34,7 +33,7 @@ class VonMisesFisher(torch.distributions.Distribution):
         self.device = loc.device
         self.__m = loc.shape[-1]
         self.__e1 = (torch.Tensor([1.] + [0] * (loc.shape[-1] - 1))).to(self.device).type(self.dtype)
-        
+
         super(VonMisesFisher, self).__init__(self.loc.size(), validate_args=validate_args)
 
     def sample(self, shape=torch.Size()):
@@ -43,33 +42,33 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     def rsample(self, shape=torch.Size(), eps=1e-20):
         shape = shape if isinstance(shape, torch.Size) else torch.Size([shape])
-        
+
         w = self.__sample_w3(shape=shape, eps=eps) if self.__m == 3 else self.__sample_w_rej(shape=shape, eps=eps)
 
         v = (torch.distributions.Normal(0, 1).sample(
             shape + torch.Size(self.loc.shape)).to(self.device).transpose(0, -1)[1:]).transpose(0, -1).type(self.dtype)
         v = v / v.norm(dim=-1, keepdim=True)
-        
+
         x = torch.cat((w, torch.sqrt((1 - (w ** 2)).clamp(eps)) * v), -1)
         z = self.__householder_rotation(x)
         z = z * self.r
 
         return z.type(self.dtype)
-    
+
     def __sample_w3(self, shape, eps=1e-20):
         shape = shape + torch.Size(self.scale.shape)
-        u = torch.distributions.Uniform(0+eps, 1-eps).sample(shape).to(self.device)
+        u = torch.distributions.Uniform(0 + eps, 1 - eps).sample(shape).to(self.device)
         self.__w = 1 + torch.stack([torch.log(u), torch.log(1 - u) - 2. * self.scale], dim=0).logsumexp(0) / self.scale
         return self.__w
 
     def __sample_w_rej(self, shape, eps=1e-20):
         c = torch.sqrt(((4 * (self.scale ** 2)) + (self.__m - 1) ** 2).clamp(eps))
         b_true = (-2. * self.scale + c) / (self.__m - 1)
-        
+
         # using Taylor approximation with a smooth swift from 10 < scale < 11
         # to avoid numerical errors for large scale
         b_app = (self.__m - 1) / (4 * self.scale)
-#         s = torch.min(torch.max(torch.Tensor([0.]), self.scale - 10), torch.Tensor([1.]))
+        #         s = torch.min(torch.max(torch.Tensor([0.]), self.scale - 10), torch.Tensor([1.]))
         s = torch.min(torch.max(torch.tensor([0.], dtype=self.dtype, device=self.device), self.scale - 10.),
                       torch.tensor([1.], dtype=self.dtype, device=self.device))
         b = b_app * s + b_true * (1 - s)
@@ -82,6 +81,7 @@ class VonMisesFisher(torch.distributions.Distribution):
     @staticmethod
     def first_nonzero(x, dim, invalid_val=-1):
         mask = x > 0
+        mask = mask.double()
         idx = torch.where(mask.any(dim=dim), mask.argmax(dim=1).squeeze(),
                           torch.tensor(invalid_val, device=x.device))
         return idx
@@ -113,7 +113,7 @@ class VonMisesFisher(torch.distributions.Distribution):
             e_ = e_.gather(1, accept_idx_clamped.view(-1, 1))
 
             reject = (accept_idx < 0)
-            accept = (1 - reject)
+            accept = ~reject
 
             w[bool_mask * accept] = w_[bool_mask * accept]
             e[bool_mask * accept] = e_[bool_mask * accept]
@@ -135,7 +135,6 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     @staticmethod
     def __ive_fraction_approx2(v, kappa, eps=1e-20):
-
         def delta_a(a):
             lamb = v + (a - 1.) / 2.
             return (v - 0.5) + lamb / (2 * torch.sqrt((torch.pow(lamb, 2) + torch.pow(kappa, 2)).clamp(eps)))
@@ -153,7 +152,7 @@ class VonMisesFisher(torch.distributions.Distribution):
         output = - self.scale * self.__ive_fraction_approx2(torch.tensor(self.__m / 2), self.scale)
 
         return output.view(*(output.shape[:-1])) + self._log_normalization() + (self.__m - 1) * torch.log(self.r)
-        
+
     def log_prob(self, x):
         # g(z) = f(z') * 1/r^(m-1)
         # g(z) = f(z / r) * 1/r^(m-1)
